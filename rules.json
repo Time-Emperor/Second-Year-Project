@@ -1,0 +1,26 @@
+[
+  {
+    "rule_id": "SSH-01",
+    "category": "ssh",
+    "severity": "High",
+    "description": "Ensure SSH root login is disabled",
+    "parameter": "PermitRootLogin",
+    "expected": "no"
+  },
+  {
+    "rule_id": "SSH-02",
+    "category": "ssh",
+    "severity": "Medium",
+    "description": "Ensure empty passwords are not permitted",
+    "parameter": "PermitEmptyPasswords",
+    "expected": "no"
+  },
+  {
+    "rule_id": "FILE-01",
+    "category": "file_permissions",
+    "severity": "Critical",
+    "description": "Ensure /etc/shadow permissions are secure",
+    "path": "/etc/shadow",
+    "expected_octal": "0600"
+  }
+]
