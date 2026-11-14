@@ -8,6 +8,37 @@
     "expected": "no"
   },
   {
+    "rule_id": "SSH-06",
+    "category": "ssh",
+    "severity": "High",
+    "description": "Ensure Hostbased authentication is disabled",
+    "parameter": "HostbasedAuthentication",
+    "expected": "no"
+  },
+  {
+    "rule_id": "FILE-01",
+    "category": "file_permissions",
+    "severity": "High",
+    "description": "Ensure correct permissions on shadow file",
+    "path": "test_shadow",
+    "expected_octal": "0600"
+  },
+  {
+    "rule_id": "FILE-02",
+    "category": "file_permissions",
+    "severity": "High",
+    "description": "Ensure correct permissions on sshd_config file",
+    "path": "etc/ssh/sshd_config",
+    "expected_octal": "0644"
+  },
+  {
+    "rule_id": "SUID-01",
+    "category": "suid",
+    "severity": "High",
+    "description": "Check SUID bit on sensitive utility binary",
+    "path": "test_shadow"
+  },
+  {
     "rule_id": "SSH-02",
     "category": "ssh",
     "severity": "Medium",
@@ -16,11 +47,114 @@
     "expected": "no"
   },
   {
-    "rule_id": "FILE-01",
+    "rule_id": "SSH-04",
+    "category": "ssh",
+    "severity": "Medium",
+    "description": "Ensure TCP port forwarding is restricted",
+    "parameter": "AllowTcpForwarding",
+    "expected": "no"
+  },
+  {
+    "rule_id": "SSH-07",
+    "category": "ssh",
+    "severity": "Medium",
+    "description": "Ensure SSH idle timeout interval is configured",
+    "parameter": "ClientAliveInterval",
+    "expected": "300"
+  },
+  {
+    "rule_id": "FILE-03",
     "category": "file_permissions",
-    "severity": "Critical",
-    "description": "Ensure /etc/shadow permissions are secure",
-    "path": "/etc/shadow",
-    "expected_octal": "0600"
+    "severity": "Medium",
+    "description": "Ensure correct permissions on group file",
+    "path": "etc/ssh/sshd_config",
+    "expected_octal": "0644"
+  },
+  {
+    "rule_id": "SUID-02",
+    "category": "suid",
+    "severity": "Medium",
+    "description": "Check SUID bit on secondary system binary",
+    "path": "etc/ssh/sshd_config"
+  },
+  {
+    "rule_id": "SSH-03",
+    "category": "ssh",
+    "severity": "Low",
+    "description": "Ensure X11 forwarding is disabled",
+    "parameter": "X11Forwarding",
+    "expected": "no"
+  },
+  {
+    "rule_id": "SSH-05",
+    "category": "ssh",
+    "severity": "Low",
+    "description": "Ensure SSH log level is set to Info",
+    "parameter": "LogLevel",
+    "expected": "info"
+  },
+  {
+    "rule_id": "SSH-08",
+    "category": "ssh",
+    "severity": "Low",
+    "description": "Ensure strict mode for file permissions is enabled",
+    "parameter": "StrictModes",
+    "expected": "yes"
+  },
+  {
+    "rule_id": "FILE-04",
+    "category": "file_permissions",
+    "severity": "Low",
+    "description": "Ensure correct permissions on motd configuration",
+    "path": "etc/ssh/sshd_config",
+    "expected_octal": "0644"
+  },
+  {
+    "rule_id": "SSH-09",
+    "category": "ssh",
+    "severity": "Low",
+    "description": "Ensure ignore rhosts is enabled",
+    "parameter": "IgnoreRhosts",
+    "expected": "yes"
+  },
+  {
+    "rule_id": "FILE-05",
+    "category": "file_permissions",
+    "severity": "None",
+    "description": "Audit local configuration directory permissions",
+    "path": "etc/ssh",
+    "expected_octal": "0755"
+  },
+  {
+    "rule_id": "SSH-10",
+    "category": "ssh",
+    "severity": "None",
+    "description": "Audit SSH banner setting",
+    "parameter": "Banner",
+    "expected": "none"
+  },
+  {
+    "rule_id": "FILE-06",
+    "category": "file_permissions",
+    "severity": "None",
+    "description": "Audit project directory permissions",
+    "path": "etc",
+    "expected_octal": "0755"
+  },
+  {
+    "rule_id": "SSH-11",
+    "category": "ssh",
+    "severity": "None",
+    "description": "Audit SSH compression parameter",
+    "parameter": "Compression",
+    "expected": "delayed"
+  },
+  {
+    "rule_id": "FILE-07",
+    "category": "file_permissions",
+    "severity": "None",
+    "description": "Audit README documentation permissions",
+    "path": "README.md",
+    "expected_octal": "0644"
   }
 ]

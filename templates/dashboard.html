@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AHHCS - Dashboard</title>
+    <style>
+        body { font-family: monospace; background: #ffffff; color: #000000; margin: 0; padding: 3rem; }
+        .container { max-width: 800px; margin: 0 auto; border: 1px solid #000000; padding: 2rem; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #000000; padding-bottom: 1rem; margin-bottom: 2rem; }
+        .btn { background: #000000; color: #ffffff; padding: 0.5rem 1rem; text-decoration: none; border: none; font-weight: bold; cursor: pointer; display: inline-block; }
+        .btn:hover { background: #333333; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; }
+        th, td { border: 1px solid #000000; padding: 0.75rem; text-align: left; }
+        th { background: #f1f5f9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h2>AHHCS Control Panel</h2>
+                <p>Operator: <strong>{{ username }}</strong></p>
+            </div>
+            <a href="{{ url_for('logout') }}" class="btn">Logout</a>
+        </div>
+
+        <h3>Execute Host Compliance Audit</h3>
+        <form action="{{ url_for('run_scan') }}" method="POST">
+            <button type="submit" class="btn">Run Live Audit & Export Report</button>
+        </form>
+
+        <h3 style="margin-top: 2rem;">Audit History Logs</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Report ID</th>
+                    <th>Timestamp</th>
+                    <th>Compliance Score</th>
+                    <th>Passed / Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in reports %}
+                <tr>
+                    <td>#{{ r.id }}</td>
+                    <td>{{ r.timestamp }}</td>
+                    <td><strong>{{ r.score_percentage }}%</strong></td>
+                    <td>{{ r.passed_checks }} / {{ r.total_checks }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" style="text-align: center;">No past audit records found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

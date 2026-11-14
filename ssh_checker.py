@@ -1,3 +1,4 @@
+import os
 def evaluate_ssh_rule(config_path: str, rule: dict) -> dict:
     """
     Evaluates an SSH configuration rule against a target sshd_config file.
