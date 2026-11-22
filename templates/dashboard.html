@@ -4,14 +4,21 @@
     <meta charset="UTF-8">
     <title>AHHCS - Dashboard</title>
     <style>
-        body { font-family: monospace; background: #ffffff; color: #000000; margin: 0; padding: 3rem; }
-        .container { max-width: 800px; margin: 0 auto; border: 1px solid #000000; padding: 2rem; }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #000000; padding-bottom: 1rem; margin-bottom: 2rem; }
-        .btn { background: #000000; color: #ffffff; padding: 0.5rem 1rem; text-decoration: none; border: none; font-weight: bold; cursor: pointer; display: inline-block; }
+        body { font-family: monospace; background: #ffffff; color: #000000; margin: 0; padding: 2.5rem; }
+        .container { max-width: 860px; margin: 0 auto; border: 1px solid #000000; padding: 2rem; background: #ffffff; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #000000; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+        .btn { background: #000000; color: #ffffff; padding: 0.55rem 1.1rem; text-decoration: none; border: none; font-weight: bold; cursor: pointer; display: inline-block; font-family: monospace; }
         .btn:hover { background: #333333; }
-        table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; }
+        .health-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 0.6rem; }
+        .health-box { border: 1px solid #000000; padding: 0.9rem; background: #ffffff; }
+        .health-label { font-size: 0.8rem; text-transform: uppercase; margin-bottom: 0.4rem; }
+        .health-val { font-weight: bold; font-size: 0.95rem; line-height: 1.4; }
+        .live-note { font-size: 0.78rem; color: #333333; margin-bottom: 1.5rem; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
         th, td { border: 1px solid #000000; padding: 0.75rem; text-align: left; }
         th { background: #f1f5f9; }
+        a.report-link { color: #000000; font-weight: bold; text-decoration: underline; }
+        @media (max-width: 700px) { .health-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -24,9 +31,26 @@
             <a href="{{ url_for('logout') }}" class="btn">Logout</a>
         </div>
 
+        <h3>System Hardware Health</h3>
+        <div class="health-grid">
+            <div class="health-box">
+                <div class="health-label">Battery Health</div>
+                <div class="health-val" id="health-battery">{{ health.battery }}</div>
+            </div>
+            <div class="health-box">
+                <div class="health-label">SSD Storage (Used / Left)</div>
+                <div class="health-val" id="health-ssd">{{ health.ssd }}</div>
+            </div>
+            <div class="health-box">
+                <div class="health-label">RAM Storage (Used / Left)</div>
+                <div class="health-val" id="health-ram">{{ health.ram }}</div>
+            </div>
+        </div>
+        <div class="live-note" id="health-updated">Real-time updates every 3s</div>
+
         <h3>Execute Host Compliance Audit</h3>
         <form action="{{ url_for('run_scan') }}" method="POST">
-            <button type="submit" class="btn">Run Live Audit & Export Report</button>
+            <button type="submit" class="btn">Run Live Audit &amp; Open Report</button>
         </form>
 
         <h3 style="margin-top: 2rem;">Audit History Logs</h3>
@@ -42,7 +66,13 @@
             <tbody>
                 {% for r in reports %}
                 <tr>
-                    <td>#{{ r.id }}</td>
+                    <td>
+                        {% if r.report_file %}
+                            <a class="report-link" href="{{ url_for('view_report', report_id=r.id) }}">#{{ r.user_scan_number }}</a>
+                        {% else %}
+                            #{{ r.user_scan_number }}
+                        {% endif %}
+                    </td>
                     <td>{{ r.timestamp }}</td>
                     <td><strong>{{ r.score_percentage }}%</strong></td>
                     <td>{{ r.passed_checks }} / {{ r.total_checks }}</td>
@@ -55,5 +85,23 @@
             </tbody>
         </table>
     </div>
+
+    <script>
+    async function refreshSystemHealth() {
+        try {
+            const res = await fetch("{{ url_for('api_system_health') }}", { cache: "no-store" });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.battery) document.getElementById("health-battery").textContent = data.battery;
+            if (data.ssd) document.getElementById("health-ssd").textContent = data.ssd;
+            if (data.ram) document.getElementById("health-ram").textContent = data.ram;
+            const now = new Date().toLocaleTimeString();
+            document.getElementById("health-updated").textContent = "Real-time updates every 3s (last sync: " + now + ")";
+        } catch (err) {
+            // Keep displayed numbers if a background poll fails transiently
+        }
+    }
+    setInterval(refreshSystemHealth, 3000);
+    </script>
 </body>
 </html>

@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AHHCS Host Hardening Audit Report</title>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --card-bg: #f8fafc;
+            --text-primary: #111827;
+            --text-secondary: #4b5563;
+            --pass-color: #16a34a;
+            --fail-color: #dc2626;
+            
+            --high-color: #dc2626;
+            --medium-color: #ca8a04;
+            --low-color: #16a34a;
+            --none-color: #64748b;
+            
+            --border-color: #e2e8f0;
+        }
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 3rem 2rem;
+        }
+        .container { max-width: 1100px; margin: 0 auto; }
+        .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            background: var(--card-bg);
+            padding: 2rem;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 2rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+        .header h1 { margin: 0 0 0.25rem 0; font-size: 1.8rem; color: var(--text-primary); }
+        .header p { color: var(--text-secondary); margin: 0; }
+        
+        .header-actions { display: flex; align-items: center; gap: 1.5rem; }
+        .btn-pdf {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-pdf:hover { background-color: #1d4ed8; }
+
+        .score-box { text-align: center; }
+        .score { font-size: 2.5rem; font-weight: 800; color: var(--pass-color); line-height: 1; }
+        .score-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; margin-top: 0.3rem; letter-spacing: 0.05em; font-weight: 600; }
+        
+        .severity-section { margin-bottom: 2rem; }
+        .section-title { 
+            font-size: 1.1rem; 
+            font-weight: 700; 
+            text-transform: uppercase; 
+            letter-spacing: 0.05em; 
+            margin-bottom: 1rem; 
+        }
+        .title-high { color: var(--high-color); }
+        .title-medium { color: var(--medium-color); }
+        .title-low { color: var(--low-color); }
+        .title-none { color: var(--none-color); }
+
+        .card { 
+            background: var(--card-bg); 
+            border-radius: 10px; 
+            padding: 1.25rem 1.5rem; 
+            margin-bottom: 1rem; 
+            border: 1px solid var(--border-color);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+        }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+        .rule-title { font-size: 1.05rem; font-weight: 600; color: var(--text-primary); }
+        
+        .badge { padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; }
+        .badge-pass { background-color: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+        .badge-fail { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+        
+        .meta-grid { display: flex; gap: 2rem; font-size: 0.9rem; color: var(--text-secondary); }
+        .meta-grid span strong { color: var(--text-primary); }
+        
+        code { background: #f1f5f9; padding: 0.2rem 0.4rem; border-radius: 4px; color: #0284c7; font-family: monospace; border: 1px solid #e2e8f0; }
+        .error-msg { color: var(--fail-color); margin-top: 0.75rem; font-size: 0.9rem; font-weight: 500; }
+
+        @media print {
+            body { background-color: white; color: black; padding: 0; }
+            .btn-pdf { display: none; }
+            .card, .header { border: 1px solid #cbd5e1; box-shadow: none; }
+        }
+    </style>
+</head>
+<body>
+    <div id="ahhcs-report-toolbar" style="max-width: 1100px; margin: 16px auto 0 auto; padding: 12px 16px; background: #ffffff; border: 1px solid #000000; font-family: monospace; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;">
+        <a href="/dashboard" style="text-decoration: none; background: #000000; color: #ffffff; padding: 8px 14px; font-weight: bold; border: 1px solid #000000; display: inline-flex; align-items: center; gap: 6px;">
+            <span>&lt;-</span>
+            <span>Back to Dashboard</span>
+        </a>
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+            <span style="color: #000000; font-weight: bold; margin-right: 4px;">Severity:</span>
+            <button type="button" class="ahhcs-sev-btn" data-sev="ALL" onclick="ahhcsFilterSeverity('ALL')" style="cursor:pointer; padding:6px 12px; border:1px solid #000000; background:#000000; color:#ffffff; font-family:monospace; font-weight:bold;">[ALL]</button>
+            <button type="button" class="ahhcs-sev-btn" data-sev="HIGH" onclick="ahhcsFilterSeverity('HIGH')" style="cursor:pointer; padding:6px 12px; border:1px solid #dc2626; background:#ffffff; color:#dc2626; font-family:monospace; font-weight:bold;">[HIGH]</button>
+            <button type="button" class="ahhcs-sev-btn" data-sev="MEDIUM" onclick="ahhcsFilterSeverity('MEDIUM')" style="cursor:pointer; padding:6px 12px; border:1px solid #ca8a04; background:#ffffff; color:#a16207; font-family:monospace; font-weight:bold;">[MID]</button>
+            <button type="button" class="ahhcs-sev-btn" data-sev="LOW" onclick="ahhcsFilterSeverity('LOW')" style="cursor:pointer; padding:6px 12px; border:1px solid #16a34a; background:#ffffff; color:#16a34a; font-family:monospace; font-weight:bold;">[LOW]</button>
+            <button type="button" class="ahhcs-sev-btn" data-sev="NONE" onclick="ahhcsFilterSeverity('NONE')" style="cursor:pointer; padding:6px 12px; border:1px solid #4b5563; background:#ffffff; color:#4b5563; font-family:monospace; font-weight:bold;">[NONE]</button>
+        </div>
+    </div>
+    <script>
+    function ahhcsFilterSeverity(level) {
+        const target = level.toUpperCase();
+        const sections = document.querySelectorAll('section, .severity-section, .section, div[data-severity]');
+        let matchedAnySection = false;
+
+        sections.forEach(sec => {
+            const attrSev = (sec.getAttribute('data-severity') || '').toUpperCase();
+            const heading = sec.querySelector('h1, h2, h3, h4');
+            const text = (attrSev || (heading ? heading.textContent : '')).toUpperCase();
+
+            const isHigh = text.includes('HIGH');
+            const isMid = text.includes('MEDIUM') || text.includes('MID');
+            const isLow = text.includes('LOW');
+            const isNone = text.includes('NONE');
+
+            if (isHigh || isMid || isLow || isNone) {
+                matchedAnySection = true;
+                let show = target === 'ALL';
+                if (target === 'HIGH' && isHigh) show = true;
+                if (target === 'MEDIUM' && isMid) show = true;
+                if (target === 'LOW' && isLow) show = true;
+                if (target === 'NONE' && isNone) show = true;
+                sec.style.display = show ? '' : 'none';
+            }
+        });
+
+        if (!matchedAnySection) {
+            const cards = document.querySelectorAll('.finding, .rule-card, .card, tr');
+            cards.forEach(el => {
+                if (el.closest('#ahhcs-report-toolbar') || el.querySelector('th')) return;
+                const txt = el.textContent.toUpperCase();
+                if (target === 'ALL') {
+                    el.style.display = '';
+                } else {
+                    const matchMid = target === 'MEDIUM' && (txt.includes('MEDIUM') || txt.includes('MID'));
+                    el.style.display = (txt.includes(target) || matchMid) ? '' : 'none';
+                }
+            });
+        }
+
+        document.querySelectorAll('.ahhcs-sev-btn').forEach(btn => {
+            const active = btn.getAttribute('data-sev') === target;
+            btn.style.outline = active ? '2px solid #000000' : 'none';
+            btn.style.outlineOffset = active ? '1px' : '0';
+        });
+    }
+    </script>
+    
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>AHHCS Host Hardening Audit</h1>
+                <p>Automated Compliance and Security Benchmark Report</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn-pdf" onclick="window.print()">
+                    Export PDF Report
+                </button>
+                <div class="score-box">
+                    <div class="score">60.0%</div>
+                    <div class="score-label">Compliance Score</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- High Severity Group -->
+        
+        
+        <div class="severity-section">
+            <div class="section-title title-high">High Severity Findings (5)</div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-01] Ensure SSH root login is disabled</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>no</code></span>
+                    <span>Actual: <code>no</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-06] Ensure Hostbased authentication is disabled</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>no</code></span>
+                    <span>Actual: <code>no</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[FILE-01] Ensure correct permissions on shadow file</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong>FILE_PERMISSIONS</strong></span>
+                    <span>Expected: <code>0600</code></span>
+                    <span>Actual: <code>0600</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[FILE-02] Ensure correct permissions on sshd_config file</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong>FILE_PERMISSIONS</strong></span>
+                    <span>Expected: <code>0644</code></span>
+                    <span>Actual: <code>0644</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SUID-01] Check SUID bit on sensitive utility binary</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong>SUID</strong></span>
+                    <span>Expected: <code>no_suid</code></span>
+                    <span>Actual: <code>secure</code></span>
+                </div>
+                
+            </div>
+            
+        </div>
+        
+
+        <!-- Medium Severity Group -->
+        
+        
+        <div class="severity-section">
+            <div class="section-title title-medium">Medium Severity Findings (5)</div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-02] Ensure empty passwords are not permitted</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>no</code></span>
+                    <span>Actual: <code>no</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-04] Ensure TCP port forwarding is restricted</div>
+                    <span class="badge badge-fail">
+                        FAIL
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>no</code></span>
+                    <span>Actual: <code>not_configured</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-07] Ensure SSH idle timeout interval is configured</div>
+                    <span class="badge badge-fail">
+                        FAIL
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>300</code></span>
+                    <span>Actual: <code>not_configured</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[FILE-03] Ensure correct permissions on group file</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong>FILE_PERMISSIONS</strong></span>
+                    <span>Expected: <code>0644</code></span>
+                    <span>Actual: <code>0644</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SUID-02] Check SUID bit on secondary system binary</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong>SUID</strong></span>
+                    <span>Expected: <code>no_suid</code></span>
+                    <span>Actual: <code>secure</code></span>
+                </div>
+                
+            </div>
+            
+        </div>
+        
+
+        <!-- Low Severity Group -->
+        
+        
+        <div class="severity-section">
+            <div class="section-title title-low">Low Severity Findings (5)</div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-03] Ensure X11 forwarding is disabled</div>
+                    <span class="badge badge-fail">
+                        FAIL
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>no</code></span>
+                    <span>Actual: <code>not_configured</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-05] Ensure SSH log level is set to Info</div>
+                    <span class="badge badge-fail">
+                        FAIL
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>info</code></span>
+                    <span>Actual: <code>not_configured</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-08] Ensure strict mode for file permissions is enabled</div>
+                    <span class="badge badge-fail">
+                        FAIL
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>yes</code></span>
+                    <span>Actual: <code>not_configured</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[FILE-04] Ensure correct permissions on motd configuration</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong>FILE_PERMISSIONS</strong></span>
+                    <span>Expected: <code>0644</code></span>
+                    <span>Actual: <code>0644</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-09] Ensure ignore rhosts is enabled</div>
+                    <span class="badge badge-fail">
+                        FAIL
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>yes</code></span>
+                    <span>Actual: <code>not_configured</code></span>
+                </div>
+                
+            </div>
+            
+        </div>
+        
+
+        <!-- None Severity Group -->
+        
+        
+        <div class="severity-section">
+            <div class="section-title title-none">General / Unclassified Findings (5)</div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[FILE-05] Audit local configuration directory permissions</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong>FILE_PERMISSIONS</strong></span>
+                    <span>Expected: <code>0755</code></span>
+                    <span>Actual: <code>0755</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-10] Audit SSH banner setting</div>
+                    <span class="badge badge-fail">
+                        FAIL
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>none</code></span>
+                    <span>Actual: <code>not_configured</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[FILE-06] Audit project directory permissions</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong>FILE_PERMISSIONS</strong></span>
+                    <span>Expected: <code>0755</code></span>
+                    <span>Actual: <code>0755</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[SSH-11] Audit SSH compression parameter</div>
+                    <span class="badge badge-fail">
+                        FAIL
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong></strong></span>
+                    <span>Expected: <code>delayed</code></span>
+                    <span>Actual: <code>not_configured</code></span>
+                </div>
+                
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <div class="rule-title">[FILE-07] Audit README documentation permissions</div>
+                    <span class="badge badge-pass">
+                        PASS
+                    </span>
+                </div>
+                <div class="meta-grid">
+                    <span>Category: <strong>FILE_PERMISSIONS</strong></span>
+                    <span>Expected: <code>0644</code></span>
+                    <span>Actual: <code>0644</code></span>
+                </div>
+                
+            </div>
+            
+        </div>
+        
+
+    </div>
+</body>
+</html>
