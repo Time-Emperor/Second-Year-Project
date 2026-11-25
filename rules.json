@@ -3,93 +3,94 @@
     "rule_id": "SSH-01",
     "category": "ssh",
     "severity": "High",
-    "description": "Ensure SSH root login is disabled",
+    "description": "Disable direct root login over SSH",
     "parameter": "PermitRootLogin",
     "expected": "no"
   },
   {
-    "rule_id": "SSH-06",
+    "rule_id": "SSH-02",
     "category": "ssh",
     "severity": "High",
-    "description": "Ensure Hostbased authentication is disabled",
-    "parameter": "HostbasedAuthentication",
+    "description": "Disallow empty passwords for SSH authentication",
+    "parameter": "PermitEmptyPasswords",
     "expected": "no"
   },
   {
     "rule_id": "FILE-01",
     "category": "file_permissions",
     "severity": "High",
-    "description": "Ensure correct permissions on shadow file",
-    "path": "test_shadow",
+    "description": "Restrict shadow password file permissions to 0600",
+    "path": "/etc/shadow",
     "expected_octal": "0600"
   },
   {
     "rule_id": "FILE-02",
     "category": "file_permissions",
     "severity": "High",
-    "description": "Ensure correct permissions on sshd_config file",
-    "path": "etc/ssh/sshd_config",
+    "description": "Verify SSH daemon configuration file permissions",
+    "path": "/etc/ssh/sshd_config",
     "expected_octal": "0644"
   },
   {
     "rule_id": "SUID-01",
     "category": "suid",
     "severity": "High",
-    "description": "Check SUID bit on sensitive utility binary",
-    "path": "test_shadow"
+    "description": "Verify SUID bit status on passwd binary",
+    "path": "/usr/bin/passwd"
   },
   {
-    "rule_id": "SSH-02",
+    "rule_id": "SSH-03",
     "category": "ssh",
     "severity": "Medium",
-    "description": "Ensure empty passwords are not permitted",
-    "parameter": "PermitEmptyPasswords",
+    "description": "Disable TCP port forwarding in SSH daemon",
+    "parameter": "AllowTcpForwarding",
     "expected": "no"
   },
   {
     "rule_id": "SSH-04",
     "category": "ssh",
     "severity": "Medium",
-    "description": "Ensure TCP port forwarding is restricted",
-    "parameter": "AllowTcpForwarding",
+    "description": "Set SSH idle session timeout interval to 300 seconds",
+    "parameter": "ClientAliveInterval",
+    "expected": "300"
+  },
+  {
+    "rule_id": "SSH-05",
+    "category": "ssh",
+    "severity": "Medium",
+    "description": "Disable host-based authentication over SSH",
+    "parameter": "HostbasedAuthentication",
     "expected": "no"
   },
   {
-    "rule_id": "SSH-07",
-    "category": "ssh",
+    "rule_id": "SYSCTL-01",
+    "category": "sysctl",
     "severity": "Medium",
-    "description": "Ensure SSH idle timeout interval is configured",
-    "parameter": "ClientAliveInterval",
-    "expected": "300"
+    "description": "Check IPv4 packet forwarding kernel setting",
+    "parameter": "net.ipv4.ip_forward",
+    "expected": "0"
   },
   {
     "rule_id": "FILE-03",
     "category": "file_permissions",
     "severity": "Medium",
-    "description": "Ensure correct permissions on group file",
-    "path": "etc/ssh/sshd_config",
-    "expected_octal": "0644"
+    "description": "Verify permissions on group account file",
+    "path": "/etc/group",
+    "expected_octal": "0600"
   },
   {
-    "rule_id": "SUID-02",
-    "category": "suid",
-    "severity": "Medium",
-    "description": "Check SUID bit on secondary system binary",
-    "path": "etc/ssh/sshd_config"
-  },
-  {
-    "rule_id": "SSH-03",
+    "rule_id": "SSH-06",
     "category": "ssh",
     "severity": "Low",
-    "description": "Ensure X11 forwarding is disabled",
+    "description": "Disable X11 forwarding over SSH sessions",
     "parameter": "X11Forwarding",
     "expected": "no"
   },
   {
-    "rule_id": "SSH-05",
+    "rule_id": "SSH-07",
     "category": "ssh",
     "severity": "Low",
-    "description": "Ensure SSH log level is set to Info",
+    "description": "Set SSH logging level to INFO",
     "parameter": "LogLevel",
     "expected": "info"
   },
@@ -97,64 +98,63 @@
     "rule_id": "SSH-08",
     "category": "ssh",
     "severity": "Low",
-    "description": "Ensure strict mode for file permissions is enabled",
+    "description": "Enable strict mode checks on SSH key and home directory permissions",
     "parameter": "StrictModes",
     "expected": "yes"
-  },
-  {
-    "rule_id": "FILE-04",
-    "category": "file_permissions",
-    "severity": "Low",
-    "description": "Ensure correct permissions on motd configuration",
-    "path": "etc/ssh/sshd_config",
-    "expected_octal": "0644"
   },
   {
     "rule_id": "SSH-09",
     "category": "ssh",
     "severity": "Low",
-    "description": "Ensure ignore rhosts is enabled",
+    "description": "Ignore legacy rhosts and shosts files for SSH",
     "parameter": "IgnoreRhosts",
     "expected": "yes"
+  },
+  {
+    "rule_id": "SUID-02",
+    "category": "suid",
+    "severity": "Low",
+    "description": "Check SUID bit status on sudo binary",
+    "path": "/usr/bin/sudo"
+  },
+  {
+    "rule_id": "FILE-04",
+    "category": "file_permissions",
+    "severity": "None",
+    "description": "Verify permissions on system passwd file",
+    "path": "/etc/passwd",
+    "expected_octal": "0600"
   },
   {
     "rule_id": "FILE-05",
     "category": "file_permissions",
     "severity": "None",
-    "description": "Audit local configuration directory permissions",
-    "path": "etc/ssh",
+    "description": "Check permissions on /etc/ssh configuration directory",
+    "path": "/etc/ssh",
     "expected_octal": "0755"
-  },
-  {
-    "rule_id": "SSH-10",
-    "category": "ssh",
-    "severity": "None",
-    "description": "Audit SSH banner setting",
-    "parameter": "Banner",
-    "expected": "none"
   },
   {
     "rule_id": "FILE-06",
     "category": "file_permissions",
     "severity": "None",
-    "description": "Audit project directory permissions",
-    "path": "etc",
-    "expected_octal": "0755"
-  },
-  {
-    "rule_id": "SSH-11",
-    "category": "ssh",
-    "severity": "None",
-    "description": "Audit SSH compression parameter",
-    "parameter": "Compression",
-    "expected": "delayed"
-  },
-  {
-    "rule_id": "FILE-07",
-    "category": "file_permissions",
-    "severity": "None",
-    "description": "Audit README documentation permissions",
+    "description": "Check permissions on project README file",
     "path": "README.md",
     "expected_octal": "0644"
+  },
+  {
+    "rule_id": "SSH-10",
+    "category": "ssh",
+    "severity": "None",
+    "description": "Check pre-login SSH banner configuration",
+    "parameter": "Banner",
+    "expected": "none"
+  },
+  {
+    "rule_id": "SYSCTL-02",
+    "category": "sysctl",
+    "severity": "None",
+    "description": "Check kernel ASLR randomization level (2 = full)",
+    "parameter": "kernel.randomize_va_space",
+    "expected": "2"
   }
 ]

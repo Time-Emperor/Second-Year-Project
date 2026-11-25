@@ -1,6 +1,5 @@
 import os
 import re
-import time
 from datetime import datetime
 
 from flask import (
@@ -15,9 +14,7 @@ from flask_login import (
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import text
 
-from parser import load_rule_engine
-from ssh_checker import evaluate_ssh_rule
-from file_checker import check_file_permissions, check_suid_binary
+from scanner_runner import execute_audit_rules
 from scoring import calculate_compliance_score
 from reporter import export_html_report
 
@@ -27,31 +24,31 @@ except ImportError:
     psutil = None
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-change-this-secret-key-in-prod')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///ahhcs.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-change-this-secret-key-in-prod")
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///ahhcs.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-REPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 db = SQLAlchemy(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = 'login'
+login_manager.login_view = "login"
 
 
-# --- DATABASE MODELS ---
 class User(UserMixin, db.Model):
-    __tablename__ = 'users'
+    __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
     created_at = db.Column(db.String(50), default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    reports = db.relationship('ScanReport', backref='author', lazy=True)
+    reports = db.relationship("ScanReport", backref="author", lazy=True)
 
 
 class ScanReport(db.Model):
-    __tablename__ = 'scan_reports'
+    __tablename__ = "scan_reports"
     id = db.Column(db.Integer, primary_key=True)
     user_scan_number = db.Column(db.Integer, nullable=False, default=1)
     timestamp = db.Column(db.String(50), nullable=False)
@@ -60,7 +57,7 @@ class ScanReport(db.Model):
     total_checks = db.Column(db.Integer, nullable=False)
     execution_time = db.Column(db.Float, default=0.0)
     report_file = db.Column(db.String(255), nullable=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
 
 
 @login_manager.user_loader
@@ -72,23 +69,22 @@ def ensure_schema():
     db.create_all()
     with db.engine.begin() as conn:
         user_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(users)"))]
-        if 'created_at' not in user_cols:
+        if "created_at" not in user_cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN created_at VARCHAR(50)"))
 
         report_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(scan_reports)"))]
-        if 'user_scan_number' not in report_cols:
+        if "user_scan_number" not in report_cols:
             conn.execute(text("ALTER TABLE scan_reports ADD COLUMN user_scan_number INTEGER DEFAULT 1"))
-        if 'execution_time' not in report_cols:
+        if "execution_time" not in report_cols:
             conn.execute(text("ALTER TABLE scan_reports ADD COLUMN execution_time FLOAT DEFAULT 0.0"))
-        if 'report_file' not in report_cols:
+        if "report_file" not in report_cols:
             conn.execute(text("ALTER TABLE scan_reports ADD COLUMN report_file VARCHAR(255)"))
 
-    users = User.query.all()
-    for u in users:
-        u_reports = ScanReport.query.filter_by(user_id=u.id).order_by(ScanReport.id.asc()).all()
-        for idx, r in enumerate(u_reports, start=1):
-            if not r.user_scan_number or r.user_scan_number != idx:
-                r.user_scan_number = idx
+    for user in User.query.all():
+        user_reports = ScanReport.query.filter_by(user_id=user.id).order_by(ScanReport.id.asc()).all()
+        for idx, rep in enumerate(user_reports, start=1):
+            if rep.user_scan_number != idx:
+                rep.user_scan_number = idx
     db.session.commit()
 
 
@@ -96,12 +92,11 @@ with app.app_context():
     ensure_schema()
 
 
-# --- SECURITY HELPERS ---
 def validate_strong_password(password: str) -> tuple[bool, str]:
     if not password or len(password) < 8:
         return False, "Password must be at least 8 characters long."
     if not re.search(r"[A-Z]", password):
-        return False, "Password must include at least one capital (uppercase) letter."
+        return False, "Password must include at least one uppercase letter."
     if not re.search(r"\d", password):
         return False, "Password must include at least one number."
     if not re.search(r"[^A-Za-z0-9]", password):
@@ -109,93 +104,81 @@ def validate_strong_password(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-# --- HARDWARE HEALTH & STORAGE HELPERS ---
-def get_system_health() -> dict:
-    # 1. Battery Health (design capacity retention + current charge level)
-    battery_status = "No Battery Detected"
-    health_pct = None
-    charge_pct = None
-    power_state = None
+def _read_sysfs_int(path: str):
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
 
-    for bp in ("/sys/class/power_supply/BAT0", "/sys/class/power_supply/BAT1"):
-        if not os.path.isdir(bp):
+
+def _read_sysfs_str(path: str):
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def get_battery_health() -> str:
+    for bat_dir in ("/sys/class/power_supply/BAT0", "/sys/class/power_supply/BAT1"):
+        if not os.path.isdir(bat_dir):
             continue
 
-        def _read_int(name):
-            p = os.path.join(bp, name)
-            if os.path.exists(p):
-                try:
-                    with open(p, "r") as f:
-                        return int(f.read().strip())
-                except (OSError, ValueError):
-                    return None
-            return None
+        energy_full = _read_sysfs_int(os.path.join(bat_dir, "energy_full"))
+        energy_design = _read_sysfs_int(os.path.join(bat_dir, "energy_full_design"))
+        charge_full = _read_sysfs_int(os.path.join(bat_dir, "charge_full"))
+        charge_design = _read_sysfs_int(os.path.join(bat_dir, "charge_full_design"))
 
-        def _read_str(name):
-            p = os.path.join(bp, name)
-            if os.path.exists(p):
-                try:
-                    with open(p, "r") as f:
-                        return f.read().strip()
-                except OSError:
-                    return None
-            return None
-
-        energy_full = _read_int("energy_full")
-        energy_design = _read_int("energy_full_design")
-        charge_full = _read_int("charge_full")
-        charge_design = _read_int("charge_full_design")
-
+        health_pct = None
         if energy_full and energy_design and energy_design > 0:
             health_pct = round((energy_full / energy_design) * 100)
         elif charge_full and charge_design and charge_design > 0:
             health_pct = round((charge_full / charge_design) * 100)
 
-        cap_val = _read_int("capacity")
-        if cap_val is not None:
-            charge_pct = cap_val
-        elif psutil and hasattr(psutil, "sensors_battery"):
+        charge_pct = _read_sysfs_int(os.path.join(bat_dir, "capacity"))
+        status_str = _read_sysfs_str(os.path.join(bat_dir, "status"))
+
+        if charge_pct is None and psutil and hasattr(psutil, "sensors_battery"):
             bat = psutil.sensors_battery()
             if bat is not None:
                 charge_pct = round(float(bat.percent), 1)
-
-        power_state = _read_str("status")
-        if not power_state and psutil and hasattr(psutil, "sensors_battery"):
-            bat = psutil.sensors_battery()
-            if bat is not None:
-                power_state = "Charging" if bat.power_plugged else "Discharging"
+                if not status_str:
+                    status_str = "Charging" if bat.power_plugged else "Discharging"
 
         if health_pct is not None or charge_pct is not None:
             parts = []
             if health_pct is not None:
                 parts.append(f"Health: {health_pct}%")
             if charge_pct is not None:
-                charge_str = f"Charge: {charge_pct}%"
-                if power_state:
-                    charge_str += f" ({power_state})"
-                parts.append(charge_str)
-            battery_status = " | ".join(parts)
-            break
+                c_txt = f"Charge: {charge_pct}%"
+                if status_str:
+                    c_txt += f" ({status_str})"
+                parts.append(c_txt)
+            return " | ".join(parts)
 
-    if battery_status == "No Battery Detected" and psutil and hasattr(psutil, "sensors_battery"):
+    if psutil and hasattr(psutil, "sensors_battery"):
         bat = psutil.sensors_battery()
         if bat is not None:
             state = "Charging" if bat.power_plugged else "Discharging"
-            battery_status = f"Charge: {round(float(bat.percent), 1)}% ({state})"
+            return f"Charge: {round(float(bat.percent), 1)}% ({state})"
 
-    # 2. SSD Storage (Used & Left across physical partitions)
-    ssd_status = "Unavailable"
+    return "No Battery Detected"
+
+
+def get_ssd_status() -> str:
+    pseudo_fs = {"tmpfs", "devtmpfs", "squashfs", "overlay", "proc", "sysfs", "cgroup2"}
     try:
         if psutil:
             seen_devices = set()
-            total_bytes = 0
-            used_bytes = 0
-            free_bytes = 0
+            total_bytes = used_bytes = free_bytes = 0
 
             for part in psutil.disk_partitions(all=False):
-                if part.fstype in ("tmpfs", "devtmpfs", "squashfs", "overlay", "proc", "sysfs", "cgroup2"):
-                    continue
-                if part.device in seen_devices:
+                if part.fstype in pseudo_fs or part.device in seen_devices:
                     continue
                 try:
                     usage = psutil.disk_usage(part.mountpoint)
@@ -208,66 +191,62 @@ def get_system_health() -> dict:
                 used_bytes += usage.used
                 free_bytes += usage.free
 
-            if total_bytes > 0:
-                total_gb = total_bytes / (1024 ** 3)
-                used_gb = used_bytes / (1024 ** 3)
-                free_gb = free_bytes / (1024 ** 3)
-                used_pct = round((used_bytes / total_bytes) * 100, 1)
-                ssd_status = f"Used: {used_gb:.1f} GB | Left: {free_gb:.1f} GB / {total_gb:.1f} GB ({used_pct}% used)"
-            else:
-                disk = psutil.disk_usage("/")
-                total_gb = disk.total / (1024 ** 3)
-                used_gb = disk.used / (1024 ** 3)
-                free_gb = disk.free / (1024 ** 3)
-                used_pct = round((disk.used / disk.total) * 100, 1) if disk.total > 0 else 0.0
-                ssd_status = f"Used: {used_gb:.1f} GB | Left: {free_gb:.1f} GB / {total_gb:.1f} GB ({used_pct}% used)"
+            if total_bytes <= 0:
+                usage = psutil.disk_usage("/")
+                total_bytes, used_bytes, free_bytes = usage.total, usage.used, usage.free
         else:
             st = os.statvfs("/")
-            total = st.f_blocks * st.f_frsize
-            free = st.f_bavail * st.f_frsize
-            used = max(0, total - free)
-            total_gb = total / (1024 ** 3)
-            used_gb = used / (1024 ** 3)
-            free_gb = free / (1024 ** 3)
-            used_pct = round((used / total) * 100, 1) if total > 0 else 0.0
-            ssd_status = f"Used: {used_gb:.1f} GB | Left: {free_gb:.1f} GB / {total_gb:.1f} GB ({used_pct}% used)"
-    except OSError:
-        ssd_status = "Check Error"
+            total_bytes = st.f_blocks * st.f_frsize
+            free_bytes = st.f_bavail * st.f_frsize
+            used_bytes = max(0, total_bytes - free_bytes)
 
-    # 3. RAM Storage (Used & Left)
-    ram_status = "Unavailable"
+        if total_bytes <= 0:
+            return "Unavailable"
+
+        total_gb = total_bytes / (1024 ** 3)
+        used_gb = used_bytes / (1024 ** 3)
+        free_gb = free_bytes / (1024 ** 3)
+        used_pct = round((used_bytes / total_bytes) * 100, 1)
+        return f"Used: {used_gb:.1f} GB | Left: {free_gb:.1f} GB / {total_gb:.1f} GB ({used_pct}% used)"
+    except OSError:
+        return "Check Error"
+
+
+def get_ram_status() -> str:
     try:
         if psutil:
             vm = psutil.virtual_memory()
-            used_gb = (vm.total - vm.available) / (1024 ** 3)
-            total_gb = vm.total / (1024 ** 3)
-            avail_gb = vm.available / (1024 ** 3)
-            used_pct = round(((vm.total - vm.available) / vm.total) * 100, 1) if vm.total > 0 else 0.0
-            ram_status = f"Used: {used_gb:.1f} GB | Left: {avail_gb:.1f} GB / {total_gb:.1f} GB ({used_pct}% used)"
+            total_bytes = vm.total
+            avail_bytes = vm.available
+            used_bytes = max(0, total_bytes - avail_bytes)
         else:
-            meminfo = {}
-            with open("/proc/meminfo", "r") as f:
+            mem = {}
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
                 for line in f:
-                    parts = line.split(":")
-                    if len(parts) == 2:
-                        meminfo[parts[0].strip()] = int(parts[1].strip().split()[0])
-            total_kb = meminfo.get("MemTotal", 0)
-            avail_kb = meminfo.get("MemAvailable", 0)
-            if total_kb > 0:
-                used_kb = max(0, total_kb - avail_kb)
-                used_pct = round((used_kb / total_kb) * 100, 1)
-                ram_status = (
-                    f"Used: {used_kb / (1024 ** 2):.1f} GB | "
-                    f"Left: {avail_kb / (1024 ** 2):.1f} GB / "
-                    f"{total_kb / (1024 ** 2):.1f} GB ({used_pct}% used)"
-                )
-    except OSError:
-        ram_status = "Check Error"
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        mem[k.strip()] = int(v.strip().split()[0]) * 1024
+            total_bytes = mem.get("MemTotal", 0)
+            avail_bytes = mem.get("MemAvailable", 0)
+            used_bytes = max(0, total_bytes - avail_bytes)
 
+        if total_bytes <= 0:
+            return "Unavailable"
+
+        total_gb = total_bytes / (1024 ** 3)
+        used_gb = used_bytes / (1024 ** 3)
+        avail_gb = avail_bytes / (1024 ** 3)
+        used_pct = round((used_bytes / total_bytes) * 100, 1)
+        return f"Used: {used_gb:.1f} GB | Left: {avail_gb:.1f} GB / {total_gb:.1f} GB ({used_pct}% used)"
+    except OSError:
+        return "Check Error"
+
+
+def get_system_health() -> dict:
     return {
-        "battery": battery_status,
-        "ssd": ssd_status,
-        "ram": ram_status,
+        "battery": get_battery_health(),
+        "ssd": get_ssd_status(),
+        "ram": get_ram_status(),
     }
 
 
@@ -279,8 +258,8 @@ def inject_report_controls(html_path: str, dashboard_url: str):
         content = f.read()
 
     content = re.sub(
-        r'<!-- AHHCS_CONTROLS_START -->.*?<!-- AHHCS_CONTROLS_END -->',
-        '',
+        r"<!-- AHHCS_CONTROLS_START -->.*?<!-- AHHCS_CONTROLS_END -->",
+        "",
         content,
         flags=re.DOTALL
     )
@@ -296,7 +275,7 @@ def inject_report_controls(html_path: str, dashboard_url: str):
         }}
         #ahhcs-top-bar {{
             max-width: 1060px;
-            margin: 18px auto 14px auto;
+            margin: 18px auto 12px auto;
             padding: 10px 16px;
             background: #ffffff;
             border: 1px solid #000000;
@@ -373,110 +352,98 @@ def inject_report_controls(html_path: str, dashboard_url: str):
     </div>
 
     <script>
-    function ahhcsParseSeverity(raw) {{
-        const u = (raw || '').toUpperCase();
-        if (u.includes('HIGH')) return 'HIGH';
-        if (u.includes('MEDIUM') || u.includes('MID')) return 'MEDIUM';
-        if (u.includes('LOW')) return 'LOW';
-        if (u.includes('NONE') || u.includes('UNCLASSIFIED')) return 'NONE';
+    function ahhcsDetectSectionSeverity(text) {{
+        const u = (text || "").toUpperCase().replace(/\\s+/g, " ").trim();
+        if (u.includes("HIGH SEVERITY") || /^HIGH\\b/.test(u)) return "HIGH";
+        if (u.includes("MEDIUM SEVERITY") || /^MEDIUM\\b/.test(u) || /^MID\\b/.test(u)) return "MEDIUM";
+        if (u.includes("LOW SEVERITY") || /^LOW\\b/.test(u)) return "LOW";
+        if (u.includes("GENERAL / UNCLASSIFIED") || u.includes("UNCLASSIFIED") || u.includes("NONE SEVERITY") || /^NONE\\b/.test(u)) return "NONE";
         return null;
     }}
 
-    function ahhcsPlaceBarBelowAuditHeading() {{
-        const bar = document.getElementById('ahhcs-severity-bar');
+    function ahhcsPlaceSeverityBar() {{
+        const bar = document.getElementById("ahhcs-severity-bar");
         if (!bar) return;
 
-        const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4'));
-        const auditHeading = headings.find(h =>
-            h.textContent.toUpperCase().includes('AHHCS HOST HARDENING AUDIT')
+        const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4"));
+        const auditTitle = headings.find(h =>
+            h.textContent.toUpperCase().includes("AHHCS HOST HARDENING AUDIT")
         );
 
-        if (auditHeading) {{
-            // Find the outer header box/card containing the title, or insert right after the heading
-            let target = auditHeading;
-            let parent = auditHeading.parentElement;
-            while (parent && parent !== document.body) {{
-                const text = parent.textContent.toUpperCase();
-                if (text.includes('COMPLIANCE SCORE') || text.includes('EXPORT PDF')) {{
-                    target = parent;
+        if (auditTitle) {{
+            let candidate = auditTitle.parentElement;
+            let bestBox = null;
+            while (candidate && candidate !== document.body) {{
+                const rect = candidate.getBoundingClientRect();
+                const hasFindings = candidate.textContent.toUpperCase().includes("SEVERITY FINDINGS") ||
+                                    candidate.textContent.toUpperCase().includes("UNCLASSIFIED FINDINGS");
+                if (!hasFindings && rect.height > 0 && rect.height < 360) {{
+                    bestBox = candidate;
                 }}
-                parent = parent.parentElement;
+                if (hasFindings) break;
+                candidate = candidate.parentElement;
             }}
-            target.insertAdjacentElement('afterend', bar);
+            if (bestBox) {{
+                bestBox.insertAdjacentElement("afterend", bar);
+                return;
+            }}
+            auditTitle.insertAdjacentElement("afterend", bar);
+            return;
+        }}
+
+        const firstSec = headings.find(h => ahhcsDetectSectionSeverity(h.textContent) !== null);
+        if (firstSec) {{
+            firstSec.insertAdjacentElement("beforebegin", bar);
         }}
     }}
 
     function ahhcsFilterSeverity(level) {{
         const target = level.toUpperCase();
-        ahhcsPlaceBarBelowAuditHeading();
+        ahhcsPlaceSeverityBar();
 
-        document.querySelectorAll('.ahhcs-sev-btn').forEach(btn => {{
-            btn.classList.toggle('active', btn.getAttribute('data-sev') === target);
+        document.querySelectorAll(".ahhcs-sev-btn").forEach(btn => {{
+            btn.classList.toggle("active", btn.getAttribute("data-sev") === target);
         }});
 
-        document.querySelectorAll('.ahhcs-hidden').forEach(el => el.classList.remove('ahhcs-hidden'));
-        if (target === 'ALL') return;
+        document.querySelectorAll(".ahhcs-hidden").forEach(el => el.classList.remove("ahhcs-hidden"));
+        if (target === "ALL") return;
 
-        // Walk all elements in document order after the severity bar
-        const bar = document.getElementById('ahhcs-severity-bar');
-        const allEls = Array.from(document.body.querySelectorAll('*')).filter(el =>
-            !el.closest('#ahhcs-top-bar') &&
-            !el.closest('#ahhcs-severity-bar') &&
-            el.id !== 'ahhcs-top-bar' &&
-            el.id !== 'ahhcs-severity-bar' &&
-            el.tagName !== 'SCRIPT' &&
-            el.tagName !== 'STYLE'
-        );
+        const bar = document.getElementById("ahhcs-severity-bar");
+        const candidates = Array.from(document.querySelectorAll("h1, h2, h3, h4, div, p, span")).filter(el => {{
+            if (el.closest("#ahhcs-top-bar") || el.closest("#ahhcs-severity-bar")) return false;
+            if (el.children.length > 3) return false;
+            return ahhcsDetectSectionSeverity(el.textContent) !== null;
+        }});
 
-        // First mark section headings (like "HIGH SEVERITY FINDINGS (5)", "MEDIUM SEVERITY FINDINGS (5)")
-        const sectionHeadings = allEls.filter(el =>
-            ['H1', 'H2', 'H3', 'H4'].includes(el.tagName) &&
-            (el.textContent.toUpperCase().includes('SEVERITY FINDINGS') ||
-             el.textContent.toUpperCase().includes('SEVERITY') ||
-             el.textContent.toUpperCase().trim() === 'NONE')
-        );
+        const sectionHeaders = candidates.filter(el => {{
+            const txt = el.textContent.toUpperCase();
+            return txt.includes("FINDINGS") || txt.includes("SEVERITY") || txt.trim() === "NONE" || txt.trim().startsWith("NONE ");
+        }});
 
-        // Build map of which elements belong under which section heading
-        let currentSectionSev = null;
-        allEls.forEach(el => {{
-            if (['H1', 'H2', 'H3', 'H4'].includes(el.tagName)) {{
-                const secSev = ahhcsParseSeverity(el.textContent);
-                if (el.textContent.toUpperCase().includes('SEVERITY') || secSev) {{
-                    currentSectionSev = secSev;
-                    if (currentSectionSev && currentSectionSev !== target) {{
-                        el.classList.add('ahhcs-hidden');
+        sectionHeaders.forEach((hdr, idx) => {{
+            const secSev = ahhcsDetectSectionSeverity(hdr.textContent);
+            if (!secSev || secSev === target) return;
+
+            hdr.classList.add("ahhcs-hidden");
+            const nextHdr = sectionHeaders[idx + 1] || null;
+            let sib = hdr.nextElementSibling;
+            while (sib && sib !== nextHdr) {{
+                if (sib !== bar && !sib.contains(nextHdr)) {{
+                    sib.classList.add("ahhcs-hidden");
+                }} else if (sib.contains(nextHdr)) {{
+                    for (const child of Array.from(sib.children)) {{
+                        if (child === nextHdr || child.contains(nextHdr)) break;
+                        child.classList.add("ahhcs-hidden");
                     }}
-                    return;
+                    break;
                 }}
-            }}
-
-            // Check explicit severity on rule/finding cards (e.g. [SSH-01], data-severity, badges)
-            const explicitSev = ahhcsParseSeverity(
-                el.getAttribute('data-severity') ||
-                el.getAttribute('data-sev') ||
-                (el.matches('[class*="sev"], [class*="severity"], .badge, .pill, .finding, .rule-card') ? el.textContent : '')
-            );
-
-            // If this element is a standalone card/row under a non-matching section heading
-            const isFindingCard = el.matches('.card, .finding, .finding-card, .rule-card, .check-card, .result-card, tr') ||
-                (el.parentElement && el.parentElement.matches('.findings, .findings-list, .rules, .cards, tbody'));
-
-            if (isFindingCard && !el.querySelector('.card, .finding, .finding-card, .rule-card, .check-card, .result-card, tr')) {{
-                const itemSev = explicitSev || currentSectionSev;
-                if (itemSev && itemSev !== target) {{
-                    el.classList.add('ahhcs-hidden');
-                }}
-            }} else if (currentSectionSev && currentSectionSev !== target && !el.contains(bar)) {{
-                // If section wrappers are used, hide direct non-matching blocks under the heading
-                if (el.parentElement && ['H1', 'H2', 'H3', 'H4'].includes(el.previousElementSibling?.tagName || '')) {{
-                    el.classList.add('ahhcs-hidden');
-                }}
+                sib = sib.nextElementSibling;
             }}
         }});
     }}
 
-    document.addEventListener('DOMContentLoaded', ahhcsPlaceBarBelowAuditHeading);
-    ahhcsPlaceBarBelowAuditHeading();
+    document.addEventListener("DOMContentLoaded", ahhcsPlaceSeverityBar);
+    ahhcsPlaceSeverityBar();
     </script>
     <!-- AHHCS_CONTROLS_END -->"""
 
@@ -491,75 +458,74 @@ def inject_report_controls(html_path: str, dashboard_url: str):
         f.write(content)
 
 
-# --- ROUTES ---
-@app.route('/')
+@app.route("/")
 def index():
     if current_user.is_authenticated:
-        return redirect(url_for('dashboard'))
-    return redirect(url_for('login'))
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("login"))
 
 
-@app.route('/register', methods=['GET', 'POST'])
+@app.route("/register", methods=["GET", "POST"])
 def register():
-    if request.method == 'POST':
-        username = (request.form.get('username') or '').strip()
-        password = request.form.get('password') or ''
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
 
         if not username or not password:
-            flash('Username and password are required.', 'danger')
-            return redirect(url_for('register'))
+            flash("Username and password are required.", "danger")
+            return redirect(url_for("register"))
 
         valid_pw, pw_msg = validate_strong_password(password)
         if not valid_pw:
-            flash(pw_msg, 'danger')
-            return redirect(url_for('register'))
+            flash(pw_msg, "danger")
+            return redirect(url_for("register"))
 
         if User.query.filter_by(username=username).first():
-            flash('Username already exists.', 'danger')
-            return redirect(url_for('register'))
+            flash("Username already exists.", "danger")
+            return redirect(url_for("register"))
 
         new_user = User(
             username=username,
-            password_hash=generate_password_hash(password, method='pbkdf2:sha256')
+            password_hash=generate_password_hash(password, method="pbkdf2:sha256")
         )
         db.session.add(new_user)
         db.session.commit()
 
-        flash('Registration successful. Please log in.', 'success')
-        return redirect(url_for('login'))
+        flash("Registration successful. Please log in.", "success")
+        return redirect(url_for("login"))
 
-    return render_template('register.html')
+    return render_template("register.html")
 
 
-@app.route('/login', methods=['GET', 'POST'])
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == 'POST':
-        username = (request.form.get('username') or '').strip()
-        password = request.form.get('password') or ''
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
 
         valid_pw, pw_msg = validate_strong_password(password)
         if not valid_pw:
-            flash(f"Login blocked: {pw_msg}", 'danger')
-            return redirect(url_for('login'))
+            flash(f"Login blocked: {pw_msg}", "danger")
+            return redirect(url_for("login"))
 
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password_hash, password):
             login_user(user)
-            return redirect(url_for('dashboard'))
+            return redirect(url_for("dashboard"))
 
-        flash('Invalid username or password.', 'danger')
+        flash("Invalid username or password.", "danger")
 
-    return render_template('login.html')
+    return render_template("login.html")
 
 
-@app.route('/logout')
+@app.route("/logout")
 @login_required
 def logout():
     logout_user()
-    return redirect(url_for('login'))
+    return redirect(url_for("login"))
 
 
-@app.route('/dashboard')
+@app.route("/dashboard")
 @login_required
 def dashboard():
     user_reports = (
@@ -568,62 +534,35 @@ def dashboard():
         .order_by(ScanReport.user_scan_number.desc(), ScanReport.id.desc())
         .all()
     )
-    health = get_system_health()
     return render_template(
-        'dashboard.html',
+        "dashboard.html",
         username=current_user.username,
         reports=user_reports,
-        health=health
+        health=get_system_health()
     )
 
 
-@app.route('/api/system-health')
+@app.route("/api/system-health")
 @login_required
 def api_system_health():
     return jsonify(get_system_health())
 
 
-@app.route('/run-scan', methods=['POST'])
+@app.route("/run-scan", methods=["POST"])
 @login_required
 def run_scan():
-    rules_path = 'rules.json'
-    rules = load_rule_engine(rules_path)
-    audit_results = []
-
-    start_time = time.time()
-    for rule in rules:
-        category = rule.get("category")
-        rule_id = rule.get("rule_id", "UNKNOWN")
-        try:
-            if category == "ssh":
-                config_path = "/etc/ssh/sshd_config" if os.path.exists("/etc/ssh/sshd_config") else "etc/ssh/sshd_config"
-                result = evaluate_ssh_rule(config_path, rule)
-            elif category == "file_permissions":
-                result = check_file_permissions(rule.get("path"), rule.get("expected_octal"), rule)
-            elif category == "suid":
-                result = check_suid_binary(rule.get("path"), rule)
-            else:
-                continue
-            audit_results.append(result)
-        except Exception:
-            audit_results.append({
-                "rule_id": rule_id,
-                "passed": False,
-                "severity": rule.get("severity", "Medium")
-            })
-
-    duration = round(time.time() - start_time, 4)
+    rules_path = os.path.join(BASE_DIR, "rules.json")
+    audit_results, duration = execute_audit_rules(rules_path, "all")
     score_data = calculate_compliance_score(audit_results)
 
-    existing_count = ScanReport.query.filter_by(user_id=current_user.id).count()
-    next_scan_num = existing_count + 1
+    next_scan_num = ScanReport.query.filter_by(user_id=current_user.id).count() + 1
 
     new_report = ScanReport(
         user_scan_number=next_scan_num,
         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        score_percentage=score_data['score_percentage'],
-        passed_checks=score_data['passed_checks'],
-        total_checks=score_data['total_checks'],
+        score_percentage=score_data["score_percentage"],
+        passed_checks=score_data["passed_checks"],
+        total_checks=score_data["total_checks"],
         execution_time=duration,
         report_file="",
         user_id=current_user.id
@@ -635,29 +574,30 @@ def run_scan():
     full_path = os.path.join(REPORTS_DIR, filename)
 
     export_html_report(audit_results, score_data, full_path)
-    inject_report_controls(full_path, url_for('dashboard'))
+    inject_report_controls(full_path, url_for("dashboard"))
 
     new_report.report_file = filename
     db.session.commit()
 
-    return redirect(url_for('view_report', report_id=new_report.id))
+    return redirect(url_for("view_report", report_id=new_report.id))
 
 
-@app.route('/report/<int:report_id>')
+@app.route("/report/<int:report_id>")
 @login_required
 def view_report(report_id: int):
     report = db.session.get(ScanReport, report_id)
     if not report or report.user_id != current_user.id or not report.report_file:
         abort(404)
 
-    full_path = os.path.join(REPORTS_DIR, os.path.basename(report.report_file))
+    safe_name = os.path.basename(report.report_file)
+    full_path = os.path.join(REPORTS_DIR, safe_name)
     if not os.path.exists(full_path):
-        flash('Report file not found on disk.', 'danger')
-        return redirect(url_for('dashboard'))
+        flash("Report file not found on disk.", "danger")
+        return redirect(url_for("dashboard"))
 
-    inject_report_controls(full_path, url_for('dashboard'))
-    return send_from_directory(REPORTS_DIR, os.path.basename(full_path))
+    inject_report_controls(full_path, url_for("dashboard"))
+    return send_from_directory(REPORTS_DIR, safe_name)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True, port=5000)

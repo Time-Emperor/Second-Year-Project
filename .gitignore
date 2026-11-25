@@ -1,0 +1,20 @@
+# Generated scan reports and test artifacts
+reports/
+
+
+# Flask instance folder and SQLite database
+instance/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python bytecode and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# OS and editor artifacts
+.DS_Store

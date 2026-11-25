@@ -1,68 +1,116 @@
 import os
 import stat
+from normalizer import format_audit_result
+
 
 def check_file_permissions(path: str, expected_octal: str, rule: dict = None) -> dict:
-    """
-    Checks if a file's octal permissions match the expected compliance standard.
-    """
+    """Compares a file or directory's 4-digit octal mode against expected_octal."""
     rule = rule or {}
-    result = {
-        "rule_id": rule.get("rule_id", "FILE-01"),
-        "category": rule.get("category", "file_permissions"),
-        "severity": rule.get("severity", "High"),
-        "description": rule.get("description", "Ensure correct file permissions"),
-        "expected": expected_octal,
-        "actual": None,
-        "passed": False,
-        "error": None
-    }
-    
+    rule_id = rule.get("rule_id", "FILE-00")
+    severity = rule.get("severity", "High")
+    description = rule.get("description", f"Check permissions on {path}")
+
     try:
-        if not os.path.exists(path):
-            result["error"] = "File not found"
-            return result
-            
-        file_stat = os.stat(path)
-        actual_octal = oct(file_stat.st_mode)[-4:]
-        result["actual"] = actual_octal
-        result["passed"] = (actual_octal == expected_octal)
-        
+        if not path or not os.path.exists(path):
+            return format_audit_result(
+                rule_id=rule_id,
+                category="file_permissions",
+                severity=severity,
+                description=description,
+                passed=False,
+                actual="missing",
+                expected=str(expected_octal),
+                error="Target path does not exist."
+            )
+
+        mode = os.stat(path).st_mode
+        actual_octal = oct(stat.S_IMODE(mode))[2:].zfill(4)
+        expected_norm = str(expected_octal).zfill(4)
+        passed = actual_octal == expected_norm
+
+        return format_audit_result(
+            rule_id=rule_id,
+            category="file_permissions",
+            severity=severity,
+            description=description,
+            passed=passed,
+            actual=actual_octal,
+            expected=expected_norm
+        )
     except PermissionError:
-        result["error"] = "Permission denied"
-    except Exception as e:
-        result["error"] = str(e)
-        
-    return result
+        return format_audit_result(
+            rule_id=rule_id,
+            category="file_permissions",
+            severity=severity,
+            description=description,
+            passed=False,
+            actual="permission_denied",
+            expected=str(expected_octal),
+            error="Permission denied reading file metadata."
+        )
+    except OSError as exc:
+        return format_audit_result(
+            rule_id=rule_id,
+            category="file_permissions",
+            severity=severity,
+            description=description,
+            passed=False,
+            actual="error",
+            expected=str(expected_octal),
+            error=str(exc)
+        )
+
 
 def check_suid_binary(path: str, rule: dict = None) -> dict:
-    """
-    Checks if a binary has SUID permissions set.
-    """
+    """Checks whether the SUID bit is set on a target binary."""
     rule = rule or {}
-    result = {
-        "rule_id": rule.get("rule_id", "SUID-01"),
-        "category": rule.get("category", "suid"),
-        "severity": rule.get("severity", "Medium"),
-        "description": rule.get("description", "Check SUID bit on binary"),
-        "expected": "no_suid",
-        "actual": None,
-        "passed": False,
-        "error": None
-    }
-    
+    rule_id = rule.get("rule_id", "SUID-00")
+    severity = rule.get("severity", "Medium")
+    description = rule.get("description", f"Check SUID bit on {path}")
+
     try:
-        if not os.path.exists(path):
-            result["error"] = "File not found"
-            return result
-            
-        file_stat = os.stat(path)
-        has_suid = bool(file_stat.st_mode & stat.S_ISUID)
-        result["actual"] = "suid_set" if has_suid else "secure"
-        result["passed"] = not has_suid
-        
+        if not path or not os.path.exists(path):
+            return format_audit_result(
+                rule_id=rule_id,
+                category="suid",
+                severity=severity,
+                description=description,
+                passed=False,
+                actual="missing",
+                expected="no_suid",
+                error="Target binary does not exist."
+            )
+
+        mode = os.stat(path).st_mode
+        has_suid = bool(mode & stat.S_ISUID)
+        return format_audit_result(
+            rule_id=rule_id,
+            category="suid",
+            severity=severity,
+            description=description,
+            passed=not has_suid,
+            actual="suid_set" if has_suid else "no_suid",
+            expected="no_suid"
+        )
     except PermissionError:
-        result["error"] = "Permission denied"
-    except Exception as e:
-        result["error"] = str(e)
-        
-    return result
+        return format_audit_result(
+            rule_id=rule_id,
+            category="suid",
+            severity=severity,
+            description=description,
+            passed=False,
+            actual="permission_denied",
+            expected="no_suid",
+            error="Permission denied inspecting binary."
+        )
+    except OSError as exc:
+        return format_audit_result(
+            rule_id=rule_id,
+            category="suid",
+            severity=severity,
+            description=description,
+            passed=False,
+            actual="error",
+            expected="no_suid",
+            error=str(exc)
+        )
